@@ -4,7 +4,7 @@ services:
   - type: web
     name: keya-fusion-system
     env: python
-    buildCommand: pip install -r requirements.txt
+    buildCommand: env CMAKE_BUILD_PARALLEL_LEVEL=1 pip install -r requirements.txt
     startCommand: gunicorn app:app
     envVars:
       - key: DATABASE_URL
