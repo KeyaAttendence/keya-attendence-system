@@ -1,0 +1,13 @@
+services:
+  # 1. Keya Fusion Unified System (Admin + User Panel)
+  # Admin is at "/" and User Kiosk is at "/user"
+  - type: web
+    name: keya-fusion-system
+    env: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn app:app
+    envVars:
+      - key: DATABASE_URL
+        sync: false # Set this to your Supabase URL in Render Dashboard
+      - key: PYTHON_VERSION
+        value: 3.10.12

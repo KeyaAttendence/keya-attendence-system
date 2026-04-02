@@ -1,0 +1,150 @@
+{% extends 'base.html' %}
+{% block title %}Attendance History{% endblock %}
+{% block content %}
+
+<div class="card">
+  <div class="card-header flex-between">
+    <h3>Attendance Records ({{ logs|length }})</h3>
+    <a href="{{ url_for('export_excel') }}" class="btn btn-success"><i class="fa-solid fa-download"></i> Download Excel</a>
+  </div>
+  <div class="card-body p-0">
+    <div class="table-responsive">
+      <table class="table">
+        <thead>
+          <tr><th>Date</th><th>Name</th><th>ID</th><th>Department</th><th>Login</th><th>Logout</th><th>Action</th></tr>
+        </thead>
+        <tbody>
+          {% for l in logs %}
+          <tr>
+            <td>{{ l.date }}</td>
+            <td><b>{{ l.name }}</b></td>
+            <td><span class="chip">{{ l.employee_id }}</span></td>
+            <td>{{ l.department }}</td>
+            <td>
+              {% if l.login_time == 'Absent' %}
+                <span class="badge danger" style="background: #FEE2E2; color: #ef4444;">Absent</span>
+              {% else %}
+                <span class="badge green">{{ l.login_time }}</span>
+              {% endif %}
+            </td>
+            <td>
+              {% if l.logout_time == 'Absent' %}
+                <span class="badge danger" style="background: #FEE2E2; color: #ef4444;">Absent</span>
+              {% elif l.logout_time %}
+                <span class="badge grey">{{ l.logout_time }}</span>
+              {% else %}
+                -
+              {% endif %}
+            </td>
+            <td>
+              <button class="btn btn-primary btn-sm" onclick="openTimeModal('{{ l.id }}', '{{ l.name }}', '{{ l.date }}', '{{ l.login_time }}', '{{ l.logout_time }}')" title="Edit Record" style="background-color: #6366f1; border-color: #6366f1; padding: 4px 8px;">
+                <i class="fa-solid fa-pen-to-square"></i>
+              </button>
+              <button class="btn btn-danger btn-sm" onclick="deleteRecord('{{ l.id }}', '{{ l.name }}', '{{ l.date }}')" title="Delete Record" style="background-color: #ef4444; border-color: #ef4444; padding: 4px 8px;">
+                <i class="fa-solid fa-trash"></i>
+              </button>
+            </td>
+          </tr>
+          {% else %}
+          <tr><td colspan="7" class="empty">No attendance records found.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<!-- Edit Attendance Time Modal -->
+<div id="timeModal" style="display:none; position:fixed; z-index:2000; left:0; top:0; width:100%; height:100%; background:rgba(0,0,0,0.5); align-items:center; justify-content:center;">
+  <div class="card" style="width:350px; max-width:90%; padding:20px; border-radius:12px;">
+    <div class="card-header" style="padding:0 0 15px 0;">
+      <h3 id="modalTitle">Edit Time</h3>
+    </div>
+    <form id="timeForm">
+      <input type="hidden" id="recordId">
+      <div style="margin-bottom:15px;">
+        <label style="display:block; font-size:0.8rem; margin-bottom:5px; color:#64748b;">Login Time (HH:MM:SS or Absent)</label>
+        <input type="text" id="loginTime" class="form-control" style="width:100%;">
+      </div>
+      <div style="margin-bottom:20px;">
+        <label style="display:block; font-size:0.8rem; margin-bottom:5px; color:#64748b;">Logout Time (HH:MM:SS or Absent)</label>
+        <input type="text" id="logoutTime" class="form-control" style="width:100%;">
+      </div>
+      <div style="display:flex; justify-content:flex-end; gap:10px;">
+        <button type="button" class="btn btn-secondary" onclick="closeTimeModal()">Cancel</button>
+        <button type="submit" class="btn btn-primary" id="saveTimeBtn">Save Changes</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<script>
+function openTimeModal(id, name, date, login, logout) {
+  document.getElementById('recordId').value = id;
+  document.getElementById('modalTitle').textContent = `Edit: ${name} (${date})`;
+  document.getElementById('loginTime').value = login === 'None' ? '' : login;
+  document.getElementById('logoutTime').value = logout === 'None' || logout === '' ? '' : logout;
+  document.getElementById('timeModal').style.display = 'flex';
+}
+
+function closeTimeModal() {
+  document.getElementById('timeModal').style.display = 'none';
+}
+
+document.getElementById('timeForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const saveBtn = document.getElementById('saveTimeBtn');
+  saveBtn.disabled = true;
+  saveBtn.textContent = "Saving...";
+
+  const payload = {
+    id: document.getElementById('recordId').value,
+    login_time: document.getElementById('loginTime').value,
+    logout_time: document.getElementById('logoutTime').value
+  };
+
+  try {
+    const res = await fetch('/api/update_attendance_time', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    const data = await res.json();
+    if (data.success) {
+      location.reload();
+    } else {
+      alert(data.message || "Failed to update record.");
+      saveBtn.disabled = false;
+      saveBtn.textContent = "Save Changes";
+    }
+  } catch (error) {
+    console.error("Error updating time:", error);
+    alert("Error: Server is either down or returned an invalid response. Check console for details.");
+    saveBtn.disabled = false;
+    saveBtn.textContent = "Save Changes";
+  }
+});
+
+async function deleteRecord(id, name, date) {
+  if (!confirm(`Are you sure you want to delete the attendance record for ${name} on ${date}? This action cannot be undone.`)) {
+    return;
+  }
+
+  try {
+    const res = await fetch(`/api/delete_attendance_record/${id}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' }
+    });
+    const data = await res.json();
+    if (data.success) {
+      location.reload();
+    } else {
+      alert(data.message || "Failed to delete record.");
+    }
+  } catch (error) {
+    console.error("Error deleting record:", error);
+    alert("Connection error while deleting record.");
+  }
+}
+</script>
+{% endblock %}

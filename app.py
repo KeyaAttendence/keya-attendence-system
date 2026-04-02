@@ -1,0 +1,568 @@
+from flask import Flask, render_template, request, jsonify, send_file, redirect, url_for, session
+from functools import wraps
+import face_recognition
+import cv2
+import numpy as np
+import os
+import pandas as pd
+from datetime import datetime
+import base64
+
+from database import init_db, add_employee, update_employee, get_all_employees, delete_employee, mark_attendance, get_attendance_logs, update_attendance_time, get_db_connection, get_cursor, get_placeholder
+from face_utils import encode_face_from_image, serialize_encoding, deserialize_encoding, match_face
+
+app = Flask(__name__)
+app.config['SECRET_KEY'] = 'fas-secret-2026'
+app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024  # 50MB limit
+
+# ─── Database Init ────────────────────────────────────────────────────────────
+init_db()
+
+# ─── In-memory face cache ─────────────────────────────────────────────────────
+known_encodings = []
+known_ids = []
+id_to_name = {}
+
+def reload_faces():
+    global known_encodings, known_ids, id_to_name
+    known_encodings, known_ids = [], []
+    id_to_name = {}
+    for emp in get_all_employees():
+        eid = emp['employee_id']
+        name = emp['name']
+        known_ids.append(eid)
+        id_to_name[eid] = name
+        known_encodings.append(deserialize_encoding(emp['face_encoding']))
+
+reload_faces()
+
+# ─── Helpers ──────────────────────────────────────────────────────────────────
+def b64_to_bytes(b64str):
+    if ',' in b64str:
+        b64str = b64str.split(',', 1)[1]
+    return base64.b64decode(b64str)
+
+# ─── Auth ─────────────────────────────────────────────────────────────────────
+ADMIN_EMAIL = os.getenv('ADMIN_EMAIL', 'admin@keyafusion.com')
+ADMIN_PASS = os.getenv('ADMIN_PASS', 'admin123')
+
+def login_required(f):
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        if 'logged_in' not in session:
+            return redirect(url_for('login'))
+        return f(*args, **kwargs)
+    return decorated_function
+
+# ─── Routes ───────────────────────────────────────────────────────────────────
+
+@app.route('/login', methods=['GET', 'POST'])
+def login():
+    if request.method == 'POST':
+        data = request.json or {}
+        email = data.get('email')
+        password = data.get('password')
+        if email == ADMIN_EMAIL and password == ADMIN_PASS:
+            session['logged_in'] = True
+            return jsonify({"success": True, "message": "Welcome back!"})
+        return jsonify({"success": False, "message": "Invalid credentials"}), 401
+    
+    if session.get('logged_in'):
+        return redirect(url_for('index'))
+    return render_template('login.html')
+
+@app.route('/logout')
+def logout():
+    session.pop('logged_in', None)
+    return redirect(url_for('login'))
+
+@app.route('/send_otp', methods=['POST'])
+def send_otp():
+    return jsonify({"success": False, "message": "Admin registration is disabled. Please sign in."}), 403
+
+@app.route('/register', methods=['POST'])
+def register():
+    return jsonify({"success": False, "message": "Admin registration is disabled."}), 403
+
+@app.route('/')
+@login_required
+def index():
+    # If this service is meant only for users, redirect home to the user panel
+    if os.getenv('APP_MODE') == 'USER':
+        return redirect(url_for('user_panel'))
+        
+    employees = get_all_employees()
+    all_logs   = get_attendance_logs()
+    today      = datetime.now().strftime('%Y-%m-%d')
+    today_logs = [l for l in all_logs if l['date'] == today]
+    
+    return render_template('index.html', 
+                           total_employees=len(employees),
+                           present_today=len(today_logs),
+                           recent_logs=all_logs[:8])
+
+@app.route('/employees')
+@login_required
+def view_employees():
+    return render_template('employees.html', employees=get_all_employees())
+
+@app.route('/add_employee')
+@login_required
+def add_employee_route():
+    return render_template('add_employee.html')
+
+@app.route('/attendance')
+@login_required
+def attendance():
+    return render_template('attendance.html')
+
+@app.route('/history')
+@login_required
+def history():
+    return render_template('history.html', logs=get_attendance_logs())
+
+@app.route('/user')
+def user_panel():
+    return render_template('user_attendance.html')
+
+@app.route('/manifest.json')
+def serve_manifest():
+    return send_file('static/manifest.json')
+
+@app.route('/sw.js')
+def serve_sw():
+    return send_file('static/sw.js')
+
+@app.route('/my-attendance')
+@app.route('/my_attendance')
+@app.route('/my-attendence')
+@app.route('/my_attendence')
+def my_attendance():
+    """ 
+    Public route for employees to view their own attendance records.
+    Authentication is handled on the frontend via localStorage ID or a search form.
+    """
+    return render_template('my_attendance.html')
+
+# ─── API: Add employee with live face samples ──────────────────────────────────
+@app.route('/api/add_employee', methods=['POST'])
+def api_add_employee():
+    try:
+        data = request.get_json(force=True)
+    except Exception as e:
+        print(f"Error parsing JSON: {e}")
+        return jsonify(success=False, message=f'Invalid request: {e}')
+
+    eid        = (data.get('employee_id') or '').strip()
+    name       = (data.get('name') or '').strip()
+    department = data.get('department', 'IT')
+    phone      = data.get('phone', '')
+    email      = data.get('email', '')
+    frames_b64 = data.get('frames', [])   # list of base64 strings
+
+    if not eid or not name:
+        return jsonify(success=False, message='Employee ID and Name are required.')
+    if not frames_b64:
+        return jsonify(success=False, message='No face frames received.')
+
+    # Extract encodings from each captured frame
+    good_encodings = []
+    for b64 in frames_b64:
+        enc = encode_face_from_image(b64_to_bytes(b64))
+        if enc is not None:
+            good_encodings.append(enc)
+
+    if len(good_encodings) < 3:
+        return jsonify(success=False,
+                       message=f'Only {len(good_encodings)} valid face frames detected out of {len(frames_b64)}. '
+                               'Ensure good lighting and face is fully visible.')
+
+    # Average the encodings → robust single representation
+    avg_encoding = np.mean(good_encodings, axis=0)
+    blob = serialize_encoding(avg_encoding)
+
+    ok = add_employee(eid, name, department, phone, email, blob)
+    if not ok:
+        return jsonify(success=False, message='Employee ID already exists. Use a different ID.')
+
+    reload_faces()
+    return jsonify(success=True,
+                   message=f'✅ {name} registered with {len(good_encodings)} face samples!')
+
+# ─── API: Delete employee ──────────────────────────────────────────────────────
+@app.route('/api/delete_employee/<eid>', methods=['POST'])
+@login_required
+def api_delete_employee(eid):
+    delete_employee(eid)
+    reload_faces()
+    return jsonify(success=True)
+
+@app.route('/api/update_employee', methods=['POST'])
+@login_required
+def api_update_employee():
+    data = request.get_json(force=True)
+    old_eid = data.get('old_employee_id')
+    new_eid = data.get('employee_id')
+    name = data.get('name')
+    dept = data.get('department')
+    phone = data.get('phone')
+    email = data.get('email')
+    
+    if not old_eid or not new_eid or not name:
+        return jsonify(success=False, message="Employee ID and Name are required.")
+    
+    ok = update_employee(old_eid, new_eid, name, dept, phone, email)
+    if ok:
+        reload_faces()
+        return jsonify(success=True, message="Employee updated successfully.")
+    return jsonify(success=False, message="Failed to update employee.")
+
+
+# ─── API: Recognise a single frame ────────────────────────────────────────────
+@app.route('/api/recognise', methods=['POST'])
+def api_recognise():
+    data = request.get_json(force=True)
+    img_b64 = data.get('frame', '')
+    if not img_b64:
+        return jsonify(success=False, faces=[])
+
+    img_bytes = b64_to_bytes(img_b64)
+    nparr = np.frombuffer(img_bytes, np.uint8)
+    bgr = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+    if bgr is None:
+        return jsonify(success=False, faces=[])
+
+    # ───── Speed & Accuracy Optimization (Hybrid Mode) ─────
+    # 1. Faster Detection: 50% scale (320x240 is ideal for HOG)
+    small = cv2.resize(bgr, (0, 0), fx=0.5, fy=0.5)
+    small_rgb = cv2.cvtColor(small, cv2.COLOR_BGR2RGB)
+    
+    # 2. Extract locations from thumbnail
+    # Upsample once to find smaller faces reliably
+    locs = face_recognition.face_locations(small_rgb, number_of_times_to_upsample=1, model='hog')
+    
+    if not locs:
+        return jsonify(success=True, faces=[])
+
+    # 3. Precise Encoding: Full Scale
+    # We use full resolution image for encoding to maintain accuracy
+    full_rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
+    # Upscale locations to match original image (2x because of 0.5 scale)
+    full_locs = [(t*2, r*2, b*2, l*2) for (t, r, b, l) in locs]
+    # num_jitters=0 for sub-100ms processing
+    encs = face_recognition.face_encodings(full_rgb, full_locs, num_jitters=0)
+
+    results = []
+    for (t, r, b, l), enc in zip(full_locs, encs):
+        # We need to find the best match and the distance
+        if not known_encodings:
+            mid, dist = None, 1.0
+        else:
+            distances = face_recognition.face_distance(known_encodings, enc)
+            best_idx = np.argmin(distances)
+            dist = float(distances[best_idx])
+            # Use strict tolerance (0.50) for high accuracy, but allow dynamic adjustment
+            mid = known_ids[best_idx] if dist < 0.55 else None
+
+        name = id_to_name.get(mid, 'Unknown') if mid else 'Unknown'
+        results.append({
+            'id':  mid if mid else 'Unknown',
+            'name': name,
+            'dist': round(dist, 4), # Helpful for frontend fine-tuning
+            'box': {'top': t, 'right': r, 'bottom': b, 'left': l}
+        })
+
+    return jsonify(success=True, faces=results)
+
+
+# ─── API: Mark attendance ─────────────────────────────────────────────────────
+@app.route('/api/mark', methods=['POST'])
+def api_mark():
+    data = request.get_json(force=True)
+    eid  = (data.get('employee_id') or '').strip()
+    if not eid:
+        return jsonify(success=False, message='No employee_id')
+    
+    # mark_attendance now returns (type, message)
+    res = mark_attendance(eid)
+    if isinstance(res, tuple):
+        status_type, msg = res
+    else:
+        status_type, msg = "ERROR", res
+        
+    return jsonify(success=True, type=status_type, message=msg)
+
+@app.route('/api/get_my_attendance', methods=['POST'])
+def api_get_my_attendance():
+    """ Public API for personal employee dashboard """
+    data = request.get_json(force=True)
+    eid = (data.get('employee_id') or '').strip()
+    month = data.get('month', datetime.now().month)
+    year = data.get('year', datetime.now().year)
+
+    if not eid:
+        return jsonify(success=False, message="Employee ID is required.")
+
+    # Get employee name
+    import database
+    employees = database.get_all_employees()
+    emp = next((e for e in employees if e['employee_id'] == eid), None)
+    name = emp['name'] if emp else "Unknown"
+
+    # Get all logs and filter by employee and month
+    all_logs = get_attendance_logs()
+    filtered_logs = []
+    for log in all_logs:
+        try:
+            log_date = datetime.strptime(log['date'], '%Y-%m-%d')
+            if log['employee_id'] == eid and log_date.month == month and log_date.year == year:
+                filtered_logs.append({
+                    'date': log['date'],
+                    'login': log['login_time'],
+                    'logout': log['logout_time'],
+                })
+        except: continue
+    
+    return jsonify(success=True, name=name, logs=filtered_logs)
+
+@app.route('/api/update_attendance_time', methods=['POST'])
+@login_required
+def api_update_attendance_time():
+    data = request.get_json(force=True)
+    rid_raw = data.get('id')
+    login_t = data.get('login_time')
+    logout_t = data.get('logout_time')
+    
+    if not rid_raw:
+        return jsonify(success=False, message="Record ID is required.")
+    
+    try:
+        rid = int(rid_raw)
+    except (ValueError, TypeError):
+        return jsonify(success=False, message="Invalid Record ID format.")
+    
+    ok = update_attendance_time(rid, login_t, logout_t)
+    if ok:
+        return jsonify(success=True, message="Attendance record updated successfully.")
+    return jsonify(success=False, message="Failed to update record in database.")
+
+# ─── API: Manual attendance override ──────────────────────────────────────────
+@app.route('/api/manual_attendance', methods=['POST'])
+def api_manual_attendance():
+    data = request.get_json(force=True)
+    eid = data.get('employee_id')
+    status = data.get('status')
+    date_val = data.get('date', datetime.now().strftime('%Y-%m-%d'))
+    
+    if not eid or not status:
+        return jsonify(success=False, message='Missing parameters')
+        
+    conn = get_db_connection()
+    cursor = get_cursor(conn)
+    p = get_placeholder()
+    
+    # Check if record exists
+    cursor.execute(f"SELECT id FROM attendance WHERE employee_id = {p} AND date = {p}", (eid, date_val))
+    record = cursor.fetchone()
+    
+    if status == 'Present':
+        in_time = datetime.now().strftime('%H:%M:%S')
+        out_time = ''
+    elif status == 'Absent':
+        in_time = 'Absent'
+        out_time = 'Absent'
+    else:
+        # Leave statuses (Sick Leave, Paid Leave)
+        in_time = status
+        out_time = status
+
+    rec_id = record['id'] if record else None
+    # SQLite row object behaves like dict but accessing by 'id' might need dict-like access
+    if record and type(record) is not dict:
+        rec_id = record[0] if isinstance(record, tuple) else record['id']
+
+    if record:
+        cursor.execute(f"UPDATE attendance SET login_time = {p}, logout_time = {p} WHERE id = {p}", (in_time, out_time, rec_id))
+    else:
+        cursor.execute(f"INSERT INTO attendance (employee_id, date, login_time, logout_time) VALUES ({p}, {p}, {p}, {p})", (eid, date_val, in_time, out_time))
+        
+    conn.commit()
+    conn.close()
+    return jsonify(success=True)
+
+
+# ─── Export Excel ─────────────────────────────────────────────────────────────
+from openpyxl.styles import PatternFill, Font, Alignment
+from openpyxl.utils import get_column_letter
+
+@app.route('/export_excel')
+@login_required
+def export_excel():
+    month = request.args.get('month', type=int, default=datetime.now().month)
+    year  = request.args.get('year',  type=int, default=datetime.now().year)
+    
+    logs = get_attendance_logs()
+    employees = get_all_employees()
+    
+    # Setup Date Range for Selected Month
+    import calendar
+    last_day = calendar.monthrange(year, month)[1]
+    
+    # If it's the current month, only go up to today
+    today = datetime.now()
+    if year == today.year and month == today.month:
+        end_date = today
+    else:
+        end_date = datetime(year, month, last_day)
+        
+    start_date = datetime(year, month, 1)
+    date_range = pd.date_range(start=start_date, end=end_date)
+    
+    # 1. Prepare Base Employee DataFrame
+    emp_list = [{'ID': e['employee_id'], 'Name': e['name'], 'Department': e['department']} for e in employees]
+    df_emp = pd.DataFrame(emp_list)
+    
+    if df_emp.empty:
+      # Fallback if no employees
+      df_emp = pd.DataFrame(columns=['ID', 'Name', 'Department'])
+    
+    # 2. Process Logs into a Dictionary
+    # Key: (employee_id, date_str), Value: Status string
+    attendance_dict = {}
+    emp_total_ot = {} # employee_id -> total seconds
+    
+    threshold_t = datetime.strptime("17:45:00", "%H:%M:%S")
+
+    for l in logs:
+        try:
+           log_date = datetime.strptime(l['date'], '%Y-%m-%d')
+           if log_date.month == month and log_date.year == year:
+               eid = l['employee_id']
+               if l['login_time'] == 'Absent':
+                   status = 'Absent'
+               elif l['login_time'] in ['Sick Leave', 'Paid Leave']:
+                   status = l['login_time']
+               else:
+                   in_t = l.get('login_time', '-')
+                   out_t = l.get('logout_time', '-') or '-'
+                   status = f"IN: {in_t}\nOUT: {out_t}"
+                   
+                   # OT Calculation
+                   if out_t and out_t != '-':
+                       try:
+                           actual_out = datetime.strptime(out_t, "%H:%M:%S")
+                           if actual_out > threshold_t:
+                               diff = actual_out - threshold_t
+                               ot_secs = diff.seconds
+                               emp_total_ot[eid] = emp_total_ot.get(eid, 0) + ot_secs
+                               
+                               # Format single day OT
+                               h, r = divmod(ot_secs, 3600)
+                               m, _ = divmod(r, 60)
+                               status += f"\nOT: {h:02}:{m:02}"
+                       except: pass
+
+               attendance_dict[(eid, log_date.strftime('%Y-%m-%d'))] = status
+        except Exception:
+           pass
+           
+    # 3. Build Date Columns
+    for single_date in date_range:
+        date_str = single_date.strftime('%Y-%m-%d')
+        col_name = single_date.strftime('%d-%b')
+        is_sunday = single_date.weekday() == 6
+        
+        status_list = []
+        for idx, row in df_emp.iterrows():
+            eid = row['ID']
+            if is_sunday:
+                status_list.append('Holiday')
+            else:
+                status = attendance_dict.get((eid, date_str), 'Absent')
+                status_list.append(status)
+                
+        df_emp[col_name] = status_list
+
+    # 3.1 Build Total OT Column
+    total_ot_list = []
+    for idx, row in df_emp.iterrows():
+        eid = row['ID']
+        secs = emp_total_ot.get(eid, 0)
+        if secs > 0:
+            h, r = divmod(secs, 3600)
+            m, _ = divmod(r, 60)
+            total_ot_list.append(f"{h}h {m}m")
+        else:
+            total_ot_list.append("-")
+    df_emp['Total Overtime'] = total_ot_list
+
+    # 4. Save via OpenPyXL and Apply Colors
+    path = os.path.join(os.path.dirname(__file__), 'data', 'Monthly_Attendance.xlsx')
+    
+    writer = pd.ExcelWriter(path, engine='openpyxl')
+    df_emp.to_excel(writer, sheet_name='Attendance', index=False)
+    
+    workbook = writer.book
+    worksheet = writer.sheets['Attendance']
+    
+    # Define Fills
+    present_fill = PatternFill(start_color="D1FAE5", end_color="D1FAE5", fill_type="solid")
+    absent_fill = PatternFill(start_color="FEE2E2", end_color="FEE2E2", fill_type="solid")
+    holiday_fill = PatternFill(start_color="EEF2FF", end_color="EEF2FF", fill_type="solid")
+    sick_fill = PatternFill(start_color="FEF3C7", end_color="FEF3C7", fill_type="solid") # light yellow/orange
+    paid_fill = PatternFill(start_color="F3E8FF", end_color="F3E8FF", fill_type="solid") # light purple
+    header_fill = PatternFill(start_color="1E293B", end_color="1E293B", fill_type="solid")
+    
+    header_font = Font(color="FFFFFF", bold=True)
+    
+    # Format Headers
+    for col_num, col_name in enumerate(df_emp.columns, 1):
+        cell = worksheet.cell(row=1, column=col_num)
+        cell.fill = header_fill
+        cell.font = header_font
+        cell.alignment = Alignment(horizontal='center', vertical='center')
+        
+        col_let = get_column_letter(col_num)
+        if col_num <= 3:
+           worksheet.column_dimensions[col_let].width = 20
+        else:
+           worksheet.column_dimensions[col_let].width = 18 # More room for IN/OUT
+    
+    # Format Cells based on text
+    for r_idx in range(2, len(df_emp) + 2):
+        worksheet.row_dimensions[r_idx].height = 42 # Much taller for better spacing
+        for c_idx in range(4, len(df_emp.columns) + 1):
+            cell = worksheet.cell(row=r_idx, column=c_idx)
+            val = str(cell.value) if cell.value else ""
+            cell.alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
+            
+            if "IN:" in val:
+                cell.fill = present_fill
+                cell.font = Font(color="065F46", bold=True, size=10) # Slightly larger font
+            elif val == 'Absent':
+                cell.fill = absent_fill
+                cell.font = Font(color="991B1B", size=9)
+            elif val == 'Holiday':
+                cell.fill = holiday_fill
+                cell.font = Font(color="3730A3", size=9)
+            elif val == 'Sick Leave':
+                cell.fill = sick_fill
+                cell.font = Font(color="92400E", bold=True, size=9)
+            elif val == 'Paid Leave':
+                cell.fill = paid_fill
+                cell.font = Font(color="6B21A8", bold=True, size=9)
+                
+    writer.close()
+    
+    return send_file(path, as_attachment=True, download_name=f'Attendance_Report_{today.strftime("%b_%Y")}.xlsx')
+
+@app.route('/api/delete_attendance_record/<int:record_id>', methods=['POST'])
+@login_required
+def api_delete_attendance_record(record_id):
+    from database import delete_attendance_record
+    if delete_attendance_record(record_id):
+        return jsonify(success=True)
+    return jsonify(success=False, message="Failed to delete record.")
+
+if __name__ == '__main__':
+    app.run(host='0.0.0.0', port=5000, debug=True, threaded=True)
