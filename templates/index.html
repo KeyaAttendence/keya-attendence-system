@@ -2,6 +2,44 @@
 {% block title %}Dashboard{% endblock %}
 {% block content %}
 
+<style>
+.dropdown-wrapper {
+    position: relative;
+    cursor: pointer;
+    transition: background 0.2s;
+}
+.dropdown-wrapper:hover {
+    background: #f8fafc;
+}
+.dropdown-menu {
+    display: none;
+    position: absolute;
+    top: calc(100% + 5px);
+    left: 0;
+    min-width: 220px;
+    max-height: 250px;
+    overflow-y: auto;
+    background: white;
+    border: 1px solid #e5e7eb;
+    border-radius: 8px;
+    box-shadow: 0 10px 15px -3px rgba(0,0,0,0.1);
+    z-index: 1000;
+}
+.dropdown-menu.show {
+    display: block;
+}
+.dropdown-item {
+    padding: 10px 15px;
+    border-bottom: 1px solid #f1f5f9;
+    font-size: 0.9rem;
+    color: #334155;
+    text-align: left;
+}
+.dropdown-item:last-child {
+    border-bottom: none;
+}
+</style>
+
 <div class="stats-row">
   <div class="stat-card">
     <div class="stat-icon blue"><i class="fa-solid fa-users"></i></div>
@@ -10,18 +48,32 @@
       <h2 class="stat-value">{{ total_employees }}</h2>
     </div>
   </div>
-  <div class="stat-card">
+  <div class="stat-card dropdown-wrapper" onclick="toggleDropdown(event, 'presentMenu')">
     <div class="stat-icon green"><i class="fa-solid fa-user-check"></i></div>
     <div>
-      <p class="stat-label">Present Today</p>
+      <p class="stat-label">Present Today <i class="fa-solid fa-chevron-down" style="font-size:0.7em;"></i></p>
       <h2 class="stat-value">{{ present_today }}</h2>
     </div>
+    <div class="dropdown-menu" id="presentMenu">
+      {% for emp in present_list %}
+        <div class="dropdown-item"><b>{{ emp.name }}</b> <span style="font-size:0.8em;color:#64748b;"><br>{{ emp.employee_id }}</span></div>
+      {% else %}
+        <div class="dropdown-item">No one present.</div>
+      {% endfor %}
+    </div>
   </div>
-  <div class="stat-card">
-    <div class="stat-icon purple"><i class="fa-solid fa-calendar-day"></i></div>
+  <div class="stat-card dropdown-wrapper" onclick="toggleDropdown(event, 'absentMenu')">
+    <div class="stat-icon purple" style="color: #ef4444; background: #fee2e2;"><i class="fa-solid fa-user-xmark"></i></div>
     <div>
-      <p class="stat-label">Today</p>
-      <h2 class="stat-value" id="todayDate" style="font-size:1rem;"></h2>
+      <p class="stat-label">Absent Today <i class="fa-solid fa-chevron-down" style="font-size:0.7em;"></i></p>
+      <h2 class="stat-value">{{ absent_today }}</h2>
+    </div>
+    <div class="dropdown-menu" id="absentMenu">
+      {% for emp in absent_list %}
+        <div class="dropdown-item"><b>{{ emp.name }}</b> <span style="font-size:0.8em;color:#64748b;"><br>{{ emp.employee_id }}</span></div>
+      {% else %}
+        <div class="dropdown-item">Everyone present!</div>
+      {% endfor %}
     </div>
   </div>
 </div>
@@ -111,10 +163,33 @@
 <script>
 document.addEventListener('DOMContentLoaded', () => {
     const today = new Date();
-    document.getElementById('todayDate').textContent = today.toDateString();
     document.getElementById('reportMonth').value = today.getMonth() + 1;
     document.getElementById('reportYear').value = today.getFullYear();
+    
+    // Close dropdowns when clicking outside
+    document.addEventListener('click', function(e) {
+        if (!e.target.closest('.dropdown-wrapper')) {
+            document.querySelectorAll('.dropdown-menu').forEach(menu => {
+                menu.classList.remove('show');
+            });
+        }
+    });
 });
+
+function toggleDropdown(event, menuId) {
+    event.stopPropagation();
+    const targetMenu = document.getElementById(menuId);
+    
+    // Close other menus
+    document.querySelectorAll('.dropdown-menu').forEach(menu => {
+        if (menu.id !== menuId) {
+            menu.classList.remove('show');
+        }
+    });
+    
+    // Toggle current menu
+    targetMenu.classList.toggle('show');
+}
 
 function downloadReport() {
     const month = document.getElementById('reportMonth').value;

@@ -96,9 +96,16 @@ def index():
     today      = datetime.now().strftime('%Y-%m-%d')
     today_logs = [l for l in all_logs if l['date'] == today]
     
+    present_eids = {l['employee_id'] for l in today_logs if l['login_time'] != 'Absent'}
+    present_employees = [e for e in employees if e['employee_id'] in present_eids]
+    absent_employees = [e for e in employees if e['employee_id'] not in present_eids]
+    
     return render_template('index.html', 
                            total_employees=len(employees),
-                           present_today=len(today_logs),
+                           present_today=len(present_employees),
+                           absent_today=len(absent_employees),
+                           present_list=present_employees,
+                           absent_list=absent_employees,
                            recent_logs=all_logs[:8])
 
 @app.route('/employees')
