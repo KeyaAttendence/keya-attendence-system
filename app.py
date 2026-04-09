@@ -492,10 +492,22 @@ def export_excel():
                 
         df_emp[col_name] = status_list
 
-    # 3.1 Build Total OT Column
+    # 3.1 Build Total OT, Present, Absent Columns
+    total_present_list = []
+    total_absent_list = []
     total_ot_list = []
+    
+    date_cols = df_emp.columns[3:] # Everything after ID, Name, Department are date columns
+    
     for idx, row in df_emp.iterrows():
         eid = row['ID']
+        
+        present_count = sum(1 for c in date_cols if str(row[c]).startswith('IN:'))
+        absent_count = sum(1 for c in date_cols if str(row[c]) == 'Absent')
+        
+        total_present_list.append(present_count)
+        total_absent_list.append(absent_count)
+        
         secs = emp_total_ot.get(eid, 0)
         if secs > 0:
             h, r = divmod(secs, 3600)
@@ -503,6 +515,9 @@ def export_excel():
             total_ot_list.append(f"{h}h {m}m")
         else:
             total_ot_list.append("-")
+            
+    df_emp['Total Present'] = total_present_list
+    df_emp['Total Absent'] = total_absent_list
     df_emp['Total Overtime'] = total_ot_list
 
     # 4. Save via OpenPyXL and Apply Colors
