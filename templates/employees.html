@@ -10,7 +10,12 @@
       <input type="time" id="attendanceInTime" class="form-control" style="padding: 5px 10px; width: auto; font-size: 0.85rem;" title="Login Time (optional)">
       <input type="time" id="attendanceOutTime" class="form-control" style="padding: 5px 10px; width: auto; font-size: 0.85rem;" title="Logout Time (optional)">
     </div>
-    <a href="{{ url_for('add_employee_route') }}" class="btn btn-primary"><i class="fa-solid fa-plus"></i> Add Employee</a>
+    <div style="display: flex; gap: 10px;">
+      <button class="btn btn-warning" onclick="markHolidayAll()" style="background-color: #8b5cf6; border-color: #8b5cf6; color: white;">
+        <i class="fa-solid fa-plane-departure"></i> Mark Holiday
+      </button>
+      <a href="{{ url_for('add_employee_route') }}" class="btn btn-primary"><i class="fa-solid fa-plus"></i> Add Employee</a>
+    </div>
   </div>
   <div class="card-body p-0">
     <div class="table-responsive">
@@ -182,6 +187,29 @@ async function markManual(id, name, status) {
     alert(`${name} marked as ${status} on ${dateVal} successfully!`);
   } else {
     alert('Failed to mark manually.');
+  }
+}
+
+async function markHolidayAll() {
+  const dateVal = document.getElementById('attendanceDate').value;
+  if (!dateVal) { 
+    alert("Please select a date first."); 
+    return; 
+  }
+  
+  if (!confirm(`Are you sure you want to mark ${dateVal} as a Company Holiday for ALL employees?`)) return;
+  
+  const res = await fetch('/api/mark_holiday_all', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ date: dateVal })
+  });
+  
+  const data = await res.json();
+  if (data.success) {
+    alert(`Company Holiday successfully marked for all employees on ${dateVal}!`);
+  } else {
+    alert(data.message || 'Failed to mark holiday.');
   }
 }
 

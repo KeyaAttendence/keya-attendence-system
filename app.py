@@ -381,7 +381,7 @@ def api_manual_attendance():
         in_time = 'Absent'
         out_time = 'Absent'
     else:
-        # Leave statuses (Sick Leave, Paid Leave)
+        # Leave statuses (Sick Leave, Paid Leave, Company Holiday)
         in_time = status
         out_time = status
 
@@ -395,6 +395,43 @@ def api_manual_attendance():
     else:
         cursor.execute(f"INSERT INTO attendance (employee_id, date, login_time, logout_time) VALUES ({p}, {p}, {p}, {p})", (eid, date_val, in_time, out_time))
         
+    conn.commit()
+    conn.close()
+    return jsonify(success=True)
+
+@app.route('/api/mark_holiday_all', methods=['POST'])
+@login_required
+def api_mark_holiday_all():
+    data = request.get_json(force=True)
+    date_val = data.get('date')
+    if not date_val:
+        return jsonify(success=False, message='Date is required')
+        
+    conn = get_db_connection()
+    cursor = get_cursor(conn)
+    p = get_placeholder()
+    
+    employees = get_all_employees()
+    for emp in employees:
+        eid = emp['employee_id']
+        cursor.execute(f"SELECT id FROM attendance WHERE employee_id = {p} AND date = {p}", (eid, date_val))
+        record = cursor.fetchone()
+        
+        in_time, out_time = 'Company Holiday', 'Company Holiday'
+        
+        # Determine record id safely
+        rec_id = None
+        if record:
+            if type(record) is not dict:
+                rec_id = record[0] if isinstance(record, tuple) else record['id']
+            else:
+                rec_id = record['id']
+                
+        if record:
+            cursor.execute(f"UPDATE attendance SET login_time = {p}, logout_time = {p} WHERE id = {p}", (in_time, out_time, rec_id))
+        else:
+            cursor.execute(f"INSERT INTO attendance (employee_id, date, login_time, logout_time) VALUES ({p}, {p}, {p}, {p})", (eid, date_val, in_time, out_time))
+            
     conn.commit()
     conn.close()
     return jsonify(success=True)
@@ -449,7 +486,7 @@ def export_excel():
                eid = l['employee_id']
                if l['login_time'] == 'Absent':
                    status = 'Absent'
-               elif l['login_time'] in ['Sick Leave', 'Paid Leave']:
+               elif l['login_time'] in ['Sick Leave', 'Paid Leave', 'Company Holiday']:
                    status = l['login_time']
                else:
                    in_t = l.get('login_time', '-')
@@ -566,7 +603,7 @@ def export_excel():
             elif val == 'Absent':
                 cell.fill = absent_fill
                 cell.font = Font(color="991B1B", size=9)
-            elif val == 'Holiday':
+            elif val == 'Holiday' or val == 'Company Holiday':
                 cell.fill = holiday_fill
                 cell.font = Font(color="3730A3", size=9)
             elif val == 'Sick Leave':
