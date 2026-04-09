@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=0">
     <title>My Attendance | Keya Fusion</title>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
@@ -155,10 +155,17 @@
         }
         .calendar-controls button:hover { background: var(--gray-200); }
 
+        .calendar-grid-wrapper {
+            overflow-x: auto;
+            -webkit-overflow-scrolling: touch;
+            padding-bottom: 5px;
+        }
+
         .calendar-grid {
             display: grid;
             grid-template-columns: repeat(7, 1fr);
             padding: 10px;
+            min-width: 600px;
         }
 
         .weekday {
@@ -225,8 +232,13 @@
             .day { min-height: 90px; padding: 5px; }
             .day-num { font-size: 0.85rem; }
             .time-info { padding: 2px; gap: 1px; }
-            .time-val { font-size: 0.7rem; }
+            .time-val { font-size: 0.75rem; }
             .time-label { display: none; }
+            .container { padding: 20px 10px; }
+            header { flex-direction: column; align-items: flex-start; gap: 15px; }
+            .user-info { width: 100%; }
+            .logout-btn { align-self: flex-end; }
+            .auth-card { padding: 30px 20px; }
         }
 
         /* ── Summary Cards ── */
@@ -296,14 +308,16 @@
                 </div>
             </div>
             
-            <div class="calendar-grid" id="calendarGrid">
-                <div class="weekday">Mon</div>
-                <div class="weekday">Tue</div>
-                <div class="weekday">Wed</div>
-                <div class="weekday">Thu</div>
-                <div class="weekday">Fri</div>
-                <div class="weekday">Sat</div>
-                <div class="weekday">Sun</div>
+            <div class="calendar-grid-wrapper">
+                <div class="calendar-grid" id="calendarGrid">
+                    <div class="weekday">Mon</div>
+                    <div class="weekday">Tue</div>
+                    <div class="weekday">Wed</div>
+                    <div class="weekday">Thu</div>
+                    <div class="weekday">Fri</div>
+                    <div class="weekday">Sat</div>
+                    <div class="weekday">Sun</div>
+                </div>
             </div>
         </div>
 
