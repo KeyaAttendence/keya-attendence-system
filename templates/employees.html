@@ -4,9 +4,11 @@
 
 <div class="card">
   <div class="card-header flex-between">
-    <div style="display: flex; align-items: center; gap: 15px;">
+    <div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
       <h3>All Employees ({{ employees|length }})</h3>
       <input type="date" id="attendanceDate" class="form-control" style="padding: 5px 10px; width: auto; font-size: 0.85rem;" title="Select date for manual attendance">
+      <input type="time" id="attendanceInTime" class="form-control" style="padding: 5px 10px; width: auto; font-size: 0.85rem;" title="Login Time (optional)">
+      <input type="time" id="attendanceOutTime" class="form-control" style="padding: 5px 10px; width: auto; font-size: 0.85rem;" title="Logout Time (optional)">
     </div>
     <a href="{{ url_for('add_employee_route') }}" class="btn btn-primary"><i class="fa-solid fa-plus"></i> Add Employee</a>
   </div>
@@ -155,16 +157,25 @@ document.getElementById('editForm').addEventListener('submit', async (e) => {
 
 async function markManual(id, name, status) {
   const dateVal = document.getElementById('attendanceDate').value;
+  const inTimeVal = document.getElementById('attendanceInTime').value;
+  const outTimeVal = document.getElementById('attendanceOutTime').value;
+
   if (!dateVal) { 
     alert("Please select a date first."); 
     return; 
   }
   
-  if (!confirm(`Mark ${name} (${id}) as ${status} for ${dateVal}?`)) return;
+  let confirmMsg = `Mark ${name} (${id}) as ${status} on ${dateVal}?`;
+  if (status === 'Present') {
+      if (inTimeVal) confirmMsg += `\nIn Time: ${inTimeVal}`;
+      if (outTimeVal) confirmMsg += `\nOut Time: ${outTimeVal}`;
+  }
+
+  if (!confirm(confirmMsg)) return;
   const res = await fetch('/api/manual_attendance', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ employee_id: id, status: status, date: dateVal })
+    body: JSON.stringify({ employee_id: id, status: status, date: dateVal, in_time: inTimeVal, out_time: outTimeVal })
   });
   const data = await res.json();
   if (data.success) {

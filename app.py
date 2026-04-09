@@ -360,6 +360,8 @@ def api_manual_attendance():
     eid = data.get('employee_id')
     status = data.get('status')
     date_val = data.get('date', datetime.now().strftime('%Y-%m-%d'))
+    in_time_val = data.get('in_time')
+    out_time_val = data.get('out_time')
     
     if not eid or not status:
         return jsonify(success=False, message='Missing parameters')
@@ -373,8 +375,8 @@ def api_manual_attendance():
     record = cursor.fetchone()
     
     if status == 'Present':
-        in_time = datetime.now().strftime('%H:%M:%S')
-        out_time = ''
+        in_time = (in_time_val + ":00") if in_time_val else datetime.now().strftime('%H:%M:%S')
+        out_time = (out_time_val + ":00") if out_time_val else ''
     elif status == 'Absent':
         in_time = 'Absent'
         out_time = 'Absent'
