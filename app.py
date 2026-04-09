@@ -565,4 +565,4 @@ def api_delete_attendance_record(record_id):
     return jsonify(success=False, message="Failed to delete record.")
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5000, debug=True, threaded=True)
+    app.run(host='0.0.0.0', port=5005, debug=True, threaded=True)
