@@ -200,18 +200,20 @@ def mark_attendance(employee_id):
             conn.close()
             return "OVERRIDE", "Manual Leave Active"
 
-        # If already logged out for today
-        if logout_val and logout_val != "":
-            conn.close()
-            return "ALREADY_OUT", f"Already Out: {logout_val}"
-
-        # Otherwise -> Check-Out
+        # We no longer block if already logged out; we update the checkout time
+        # so that the latest scan becomes the final check-out time.
+        
         # SAFETY WINDOW: Prevent accidental Check-Out if it's within 30 mins of Check-In
         try:
             from datetime import datetime as dt
-            fmt = '%H:%M:%S'
-            t1 = dt.strptime(login_val, fmt)
-            t2 = dt.strptime(now_time, fmt)
+            # Handle potential different time formats like with or without AM/PM
+            try:
+                t1 = dt.strptime(login_val, '%H:%M:%S')
+            except ValueError:
+                # If it fails, try parsing with AM/PM (in case of manual entry)
+                t1 = dt.strptime(login_val, '%I:%M %p')
+                
+            t2 = dt.strptime(now_time, '%H:%M:%S')
             diff_sec = (t2 - t1).total_seconds()
             
             # If less than 30 minutes (1800 seconds)
@@ -224,6 +226,10 @@ def mark_attendance(employee_id):
         cursor.execute(f"UPDATE attendance SET logout_time = {p} WHERE id = {p}", (now_time, rid))
         conn.commit()
         conn.close()
+        
+        if logout_val and logout_val != "":
+            return "OUT", f"Check-Out Updated: {now_time}"
+            
         return "OUT", f"Check-Out: {now_time}"
 
 def get_attendance_logs(date=None):

@@ -494,12 +494,25 @@ def export_excel():
                    status = f"IN: {in_t}\nOUT: {out_t}"
                    
                    # OT Calculation
-                   if out_t and out_t != '-':
+                   if out_t and out_t != '-' and in_t and in_t != '-':
                        try:
                            actual_out = datetime.strptime(out_t, "%H:%M:%S")
-                           if actual_out > threshold_t:
-                               diff = actual_out - threshold_t
-                               ot_secs = diff.seconds
+                           actual_in = datetime.strptime(in_t, "%H:%M:%S")
+                           ot_secs = 0
+                           
+                           is_sunday_log = log_date.weekday() == 6
+                           
+                           if is_sunday_log:
+                               # Full time worked on Sunday is OT
+                               if actual_out > actual_in:
+                                   diff = actual_out - actual_in
+                                   ot_secs = diff.seconds
+                           else:
+                               if actual_out > threshold_t:
+                                   diff = actual_out - threshold_t
+                                   ot_secs = diff.seconds
+                                   
+                           if ot_secs > 0:
                                emp_total_ot[eid] = emp_total_ot.get(eid, 0) + ot_secs
                                
                                # Format single day OT
@@ -522,7 +535,11 @@ def export_excel():
         for idx, row in df_emp.iterrows():
             eid = row['ID']
             if is_sunday:
-                status_list.append('Holiday')
+                status = attendance_dict.get((eid, date_str))
+                if status:
+                    status_list.append(status)
+                else:
+                    status_list.append('Holiday')
             else:
                 status = attendance_dict.get((eid, date_str), 'Absent')
                 status_list.append(status)
