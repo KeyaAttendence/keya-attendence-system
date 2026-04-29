@@ -8,7 +8,7 @@ import pandas as pd
 from datetime import datetime
 import base64
 
-from database import init_db, add_employee, update_employee, get_all_employees, get_all_employees_no_blob, delete_employee, mark_attendance, get_attendance_logs, update_attendance_time, get_db_connection, get_cursor, get_placeholder
+from database import init_db, add_employee, update_employee, get_all_employees, get_all_employees_no_blob, delete_employee, mark_attendance, get_attendance_logs, get_attendance_logs_count, update_attendance_time, get_db_connection, get_cursor, get_placeholder
 from face_utils import encode_face_from_image, serialize_encoding, deserialize_encoding, match_face
 
 app = Flask(__name__)
@@ -127,7 +127,17 @@ def attendance():
 @app.route('/history')
 @login_required
 def history():
-    return render_template('history.html', logs=get_attendance_logs())
+    page = request.args.get('page', 1, type=int)
+    per_page = request.args.get('per_page', 50, type=int)
+    offset = (page - 1) * per_page
+    
+    logs = get_attendance_logs(limit=per_page, offset=offset)
+    total_logs = get_attendance_logs_count()
+    
+    import math
+    total_pages = math.ceil(total_logs / per_page) if total_logs > 0 else 1
+    
+    return render_template('history.html', logs=logs, page=page, total_pages=total_pages, total_logs=total_logs)
 
 @app.route('/user')
 def user_panel():

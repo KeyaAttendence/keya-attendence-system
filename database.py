@@ -56,6 +56,8 @@ def init_db():
                 FOREIGN KEY (employee_id) REFERENCES employees (employee_id)
             )
         ''')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_attendance_date ON attendance(date)')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_attendance_emp_date ON attendance(employee_id, date)')
     else:
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS employees (
@@ -77,6 +79,8 @@ def init_db():
                 FOREIGN KEY (employee_id) REFERENCES employees (employee_id)
             )
         ''')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_attendance_date ON attendance(date)')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_attendance_emp_date ON attendance(employee_id, date)')
 
     conn.commit()
     conn.close()
@@ -241,7 +245,7 @@ def mark_attendance(employee_id):
             
         return "OUT", f"Check-Out: {now_time}"
 
-def get_attendance_logs(date=None, limit=None):
+def get_attendance_logs(date=None, limit=None, offset=None):
     conn = get_db_connection()
     cursor = get_cursor(conn)
     p = get_placeholder()
@@ -255,6 +259,8 @@ def get_attendance_logs(date=None, limit=None):
         '''
         if limit:
             query += f" LIMIT {limit}"
+        if offset:
+            query += f" OFFSET {offset}"
         cursor.execute(query, (date,))
     else:
         query = '''
@@ -265,10 +271,27 @@ def get_attendance_logs(date=None, limit=None):
         '''
         if limit:
             query += f" LIMIT {limit}"
+        if offset:
+            query += f" OFFSET {offset}"
         cursor.execute(query)
     logs = cursor.fetchall()
     conn.close()
     return logs
+
+def get_attendance_logs_count(date=None):
+    conn = get_db_connection()
+    cursor = get_cursor(conn)
+    p = get_placeholder()
+    if date:
+        cursor.execute(f"SELECT COUNT(*) FROM attendance WHERE date = {p}", (date,))
+    else:
+        cursor.execute("SELECT COUNT(*) FROM attendance")
+    
+    count_row = cursor.fetchone()
+    # Handle dict or tuple
+    count = count_row['count'] if isinstance(count_row, dict) and 'count' in count_row else count_row[0]
+    conn.close()
+    return count
 
 def update_attendance_time(record_id, login_time, logout_time):
     conn = get_db_connection()
