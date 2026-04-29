@@ -611,7 +611,8 @@
                     overlay.width = cap.width = video.videoWidth;
                     overlay.height = cap.height = video.videoHeight;
                     if (loopTimer) clearInterval(loopTimer);
-                    loopTimer = setInterval(processFrame, 350);
+                    // Increased from 350ms to 600ms to reduce server CPU load
+                    loopTimer = setInterval(processFrame, 600);
                     resetInactivityTimer(); // Start the 1 min timer
                 };
 

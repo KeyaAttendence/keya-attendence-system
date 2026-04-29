@@ -114,9 +114,8 @@
         vid.onloadedmetadata = () => {
           overlay.width = cap.width = vid.videoWidth;
           overlay.height = cap.height = vid.videoHeight;
-          // Start at ~3 fps
-          // Start loop with busy check
-          loopTimer = setInterval(sendFrame, 300);
+          // Increased from 300ms to 600ms to reduce server CPU load
+          loopTimer = setInterval(sendFrame, 600);
         };
       } catch (e) {
         alert('Camera error: ' + e.message + '\nPlease allow camera access.');
