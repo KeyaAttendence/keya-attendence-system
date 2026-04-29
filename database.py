@@ -10,16 +10,28 @@ load_dotenv()
 DB_URL = os.getenv('DATABASE_URL')
 SQLITE_PATH = os.path.join(os.path.dirname(__file__), 'data', 'attendance.db')
 
+db_pool = None
+if DB_URL:
+    from psycopg2 import pool
+    # Connection pool to drastically reduce connection time to remote database
+    db_pool = pool.ThreadedConnectionPool(1, 10, DB_URL)
+
 def get_db_connection():
     if DB_URL:
-        # PostgreSQL (Supabase)
-        conn = psycopg2.connect(DB_URL)
+        # PostgreSQL (Supabase) using Pool
+        conn = db_pool.getconn()
         return conn
     else:
         # Local SQLite
         conn = sqlite3.connect(SQLITE_PATH)
         conn.row_factory = sqlite3.Row
         return conn
+
+def release_db_connection(conn):
+    if DB_URL:
+        db_pool.putconn(conn)
+    else:
+        conn.close()
 
 def get_cursor(conn):
     if DB_URL:
@@ -83,7 +95,7 @@ def init_db():
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_attendance_emp_date ON attendance(employee_id, date)')
 
     conn.commit()
-    conn.close()
+    release_db_connection(conn)
 
 # Helper functions
 def add_employee(employee_id, name, department, phone, email, face_encoding_bytes):
@@ -104,14 +116,14 @@ def add_employee(employee_id, name, department, phone, email, face_encoding_byte
         print(f"Error adding employee: {e}")
         return False
     finally:
-        conn.close()
+        release_db_connection(conn)
 
 def get_all_employees():
     conn = get_db_connection()
     cursor = get_cursor(conn)
     cursor.execute('SELECT * FROM employees')
     employees = cursor.fetchall()
-    conn.close()
+    release_db_connection(conn)
     return employees
 
 def get_all_employees_no_blob():
@@ -120,7 +132,7 @@ def get_all_employees_no_blob():
     # Exclude face_encoding (BLOB) for faster GUI loads
     cursor.execute('SELECT employee_id, name, department, phone, email FROM employees')
     employees = cursor.fetchall()
-    conn.close()
+    release_db_connection(conn)
     return employees
 
 def update_employee(old_eid, new_eid, name, department, phone, email):
@@ -164,7 +176,7 @@ def update_employee(old_eid, new_eid, name, department, phone, email):
         print(f"Error updating employee: {e}")
         return False
     finally:
-        conn.close()
+        release_db_connection(conn)
 
 def delete_employee(employee_id):
     conn = get_db_connection()
@@ -174,7 +186,7 @@ def delete_employee(employee_id):
     cursor.execute(f'DELETE FROM attendance WHERE employee_id = {p}', (employee_id,))
     cursor.execute(f'DELETE FROM employees WHERE employee_id = {p}', (employee_id,))
     conn.commit()
-    conn.close()
+    release_db_connection(conn)
 
 def mark_attendance(employee_id):
     conn = get_db_connection()
@@ -197,7 +209,7 @@ def mark_attendance(employee_id):
             VALUES ({p}, {p}, {p}, {p})
         ''', (employee_id, today, now_time, ""))
         conn.commit()
-        conn.close()
+        release_db_connection(conn)
         return "IN", f"Check-In: {now_time}"
     else:
         # Extract values (handle both dict and tuple)
@@ -210,7 +222,7 @@ def mark_attendance(employee_id):
 
         # Safety: If manual override is active, don't update
         if login_val == 'Absent' or logout_val == 'Absent' or login_val == 'Sick Leave' or login_val == 'Paid Leave':
-            conn.close()
+            release_db_connection(conn)
             return "OVERRIDE", "Manual Leave Active"
 
         # We no longer block if already logged out; we update the checkout time
@@ -231,14 +243,14 @@ def mark_attendance(employee_id):
             
             # If less than 30 minutes (1800 seconds)
             if 0 <= diff_sec < 1800:
-                conn.close()
+                release_db_connection(conn)
                 return "ALREADY_IN", f"Already Checked-In! (Wait 30m to Out)"
         except Exception as e:
             print(f"Time comparison error: {e}")
 
         cursor.execute(f"UPDATE attendance SET logout_time = {p} WHERE id = {p}", (now_time, rid))
         conn.commit()
-        conn.close()
+        release_db_connection(conn)
         
         if logout_val and logout_val != "":
             return "OUT", f"Check-Out Updated: {now_time}"
@@ -275,7 +287,7 @@ def get_attendance_logs(date=None, limit=None, offset=None):
             query += f" OFFSET {offset}"
         cursor.execute(query)
     logs = cursor.fetchall()
-    conn.close()
+    release_db_connection(conn)
     return logs
 
 def get_attendance_logs_count(date=None):
@@ -290,7 +302,7 @@ def get_attendance_logs_count(date=None):
     count_row = cursor.fetchone()
     # Handle dict or tuple
     count = count_row['count'] if isinstance(count_row, dict) and 'count' in count_row else count_row[0]
-    conn.close()
+    release_db_connection(conn)
     return count
 
 def update_attendance_time(record_id, login_time, logout_time):
@@ -309,7 +321,7 @@ def update_attendance_time(record_id, login_time, logout_time):
         print(f"Error updating attendance time: {e}")
         return False
     finally:
-        conn.close()
+        release_db_connection(conn)
 
 def delete_attendance_record(record_id):
     conn = get_db_connection()
@@ -323,4 +335,4 @@ def delete_attendance_record(record_id):
         print(f"Error deleting attendance record: {e}")
         return False
     finally:
-        conn.close()
+        release_db_connection(conn)
