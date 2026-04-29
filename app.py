@@ -8,7 +8,7 @@ import pandas as pd
 from datetime import datetime
 import base64
 
-from database import init_db, add_employee, update_employee, get_all_employees, delete_employee, mark_attendance, get_attendance_logs, update_attendance_time, get_db_connection, get_cursor, get_placeholder
+from database import init_db, add_employee, update_employee, get_all_employees, get_all_employees_no_blob, delete_employee, mark_attendance, get_attendance_logs, update_attendance_time, get_db_connection, get_cursor, get_placeholder
 from face_utils import encode_face_from_image, serialize_encoding, deserialize_encoding, match_face
 
 app = Flask(__name__)
@@ -91,14 +91,15 @@ def index():
     if os.getenv('APP_MODE') == 'USER':
         return redirect(url_for('user_panel'))
         
-    employees = get_all_employees()
-    all_logs   = get_attendance_logs()
+    employees = get_all_employees_no_blob()
     today      = datetime.now().strftime('%Y-%m-%d')
-    today_logs = [l for l in all_logs if l['date'] == today]
+    today_logs = get_attendance_logs(date=today)
     
     present_eids = {l['employee_id'] for l in today_logs if l['login_time'] != 'Absent'}
     present_employees = [e for e in employees if e['employee_id'] in present_eids]
     absent_employees = [e for e in employees if e['employee_id'] not in present_eids]
+    
+    recent_logs = get_attendance_logs(limit=8)
     
     return render_template('index.html', 
                            total_employees=len(employees),
@@ -106,12 +107,12 @@ def index():
                            absent_today=len(absent_employees),
                            present_list=present_employees,
                            absent_list=absent_employees,
-                           recent_logs=all_logs[:8])
+                           recent_logs=recent_logs)
 
 @app.route('/employees')
 @login_required
 def view_employees():
-    return render_template('employees.html', employees=get_all_employees())
+    return render_template('employees.html', employees=get_all_employees_no_blob())
 
 @app.route('/add_employee')
 @login_required
@@ -312,7 +313,7 @@ def api_get_my_attendance():
 
     # Get employee name
     import database
-    employees = database.get_all_employees()
+    employees = database.get_all_employees_no_blob()
     emp = next((e for e in employees if e['employee_id'] == eid), None)
     name = emp['name'] if emp else "Unknown"
 
@@ -411,7 +412,7 @@ def api_mark_holiday_all():
     cursor = get_cursor(conn)
     p = get_placeholder()
     
-    employees = get_all_employees()
+    employees = get_all_employees_no_blob()
     for emp in employees:
         eid = emp['employee_id']
         cursor.execute(f"SELECT id FROM attendance WHERE employee_id = {p} AND date = {p}", (eid, date_val))
@@ -448,7 +449,7 @@ def export_excel():
     year  = request.args.get('year',  type=int, default=datetime.now().year)
     
     logs = get_attendance_logs()
-    employees = get_all_employees()
+    employees = get_all_employees_no_blob()
     
     # Setup Date Range for Selected Month
     import calendar

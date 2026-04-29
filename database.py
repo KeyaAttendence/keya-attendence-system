@@ -110,6 +110,15 @@ def get_all_employees():
     conn.close()
     return employees
 
+def get_all_employees_no_blob():
+    conn = get_db_connection()
+    cursor = get_cursor(conn)
+    # Exclude face_encoding (BLOB) for faster GUI loads
+    cursor.execute('SELECT employee_id, name, department, phone, email FROM employees')
+    employees = cursor.fetchall()
+    conn.close()
+    return employees
+
 def update_employee(old_eid, new_eid, name, department, phone, email):
     conn = get_db_connection()
     cursor = get_cursor(conn)
@@ -232,7 +241,7 @@ def mark_attendance(employee_id):
             
         return "OUT", f"Check-Out: {now_time}"
 
-def get_attendance_logs(date=None):
+def get_attendance_logs(date=None, limit=None):
     conn = get_db_connection()
     cursor = get_cursor(conn)
     p = get_placeholder()
@@ -244,6 +253,8 @@ def get_attendance_logs(date=None):
             WHERE a.date = {p}
             ORDER BY a.login_time DESC
         '''
+        if limit:
+            query += f" LIMIT {limit}"
         cursor.execute(query, (date,))
     else:
         query = '''
@@ -252,6 +263,8 @@ def get_attendance_logs(date=None):
             JOIN employees e ON a.employee_id = e.employee_id
             ORDER BY a.date DESC, a.login_time DESC
         '''
+        if limit:
+            query += f" LIMIT {limit}"
         cursor.execute(query)
     logs = cursor.fetchall()
     conn.close()
