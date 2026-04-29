@@ -555,6 +555,14 @@
         let isBusy = false;
         let isMarking = false;
         let loopTimer = null;
+        let inactivityTimer = null;
+
+        function resetInactivityTimer() {
+            if (inactivityTimer) clearTimeout(inactivityTimer);
+            inactivityTimer = setTimeout(() => {
+                window.location.reload();
+            }, 60000); // 60 seconds of no face detected = reload
+        }
 
         // ── Pre-Recorded Audio Logic ──
         function playSound(audioEl) {
@@ -604,6 +612,7 @@
                     overlay.height = cap.height = video.videoHeight;
                     if (loopTimer) clearInterval(loopTimer);
                     loopTimer = setInterval(processFrame, 350);
+                    resetInactivityTimer(); // Start the 1 min timer
                 };
 
                 // Catch it if it's already loaded OR when it loads
@@ -667,6 +676,9 @@
                 const data = await res.json();
                 if (data.success) {
                     const facesData = data.faces || [];
+                    if (facesData.length > 0) {
+                        resetInactivityTimer(); // Reset timer if any face is detected
+                    }
                     facesData.forEach(f => {
                         if (f && f.id !== 'Unknown') {
                             idToName[f.id] = f.name;
